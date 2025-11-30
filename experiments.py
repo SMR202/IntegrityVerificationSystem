@@ -14,6 +14,7 @@ import sys
 import json
 import time
 import math
+import psutil
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -22,6 +23,12 @@ from src.merkle_tree import MerkleTree
 from src.integrity import IntegrityVerifier
 from src.tamper_detection import TamperDetector, TamperSimulator, TamperType
 from src.performance import PerformanceMonitor
+
+
+def get_memory_mb() -> float:
+    """Get current memory usage in MB."""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / (1024 * 1024)
 
 
 class ExperimentRunner:
@@ -72,8 +79,10 @@ class ExperimentRunner:
         """
         Experiment A: Static Integrity Verification
         
+        Requirement: Compute Merkle Root for a 1M-record dataset.
+        
         Steps:
-        1. Load dataset
+        1. Load dataset (up to 1M records)
         2. Build Merkle Tree
         3. Store root hash
         4. Rebuild tree and compare root
@@ -84,8 +93,8 @@ class ExperimentRunner:
         
         loader = DataLoader()
         
-        # Test with different sizes
-        test_sizes = [1000, 10000, 100000]
+        # Test with different sizes including 1M as required
+        test_sizes = [1000, 10000, 100000, 1000000]
         results = {"tests": [], "summary": {}}
         
         for size in test_sizes:
@@ -260,11 +269,13 @@ class ExperimentRunner:
         """
         Experiment C: Proof Generation & Verification Performance
         
-        Requirement: Proof verification must complete in < 100ms
+        Requirement: Test 1000 random existence proofs and average their latency.
+        Proof verification must complete in < 100ms.
         """
         print("\n" + "=" * 70)
         print("  EXPERIMENT C: Proof Performance Benchmarking")
         print("=" * 70)
+        print("  Testing 1000 random existence proofs per dataset size...")
         
         loader = DataLoader()
         
@@ -284,13 +295,15 @@ class ExperimentRunner:
             tree = MerkleTree()
             tree.build(reviews, show_progress=False)
             
-            # Run proof benchmarks
-            sample_size = min(100, actual_size)
+            # Run proof benchmarks - 1000 random proofs as required
+            sample_size = min(1000, actual_size)
             generation_times = []
             verification_times = []
             total_times = []
             
-            sample_indices = [i * (actual_size // sample_size) for i in range(sample_size)]
+            # Use random sampling for 1000 proofs
+            import random
+            sample_indices = random.sample(range(actual_size), sample_size)
             
             for idx in sample_indices:
                 review = reviews[idx]
@@ -336,6 +349,7 @@ class ExperimentRunner:
             
             status = "✓" if meets_requirement else "✗"
             print(f"  Records: {actual_size:,}")
+            print(f"  Proofs tested: {sample_size:,}")
             print(f"  Proof length: {test_result['proof_length']} hashes (log₂({actual_size})={math.log2(actual_size):.1f})")
             print(f"  Avg proof time: {avg_total:.4f} ms")
             print(f"  Max proof time: {max_total:.4f} ms")
@@ -361,25 +375,32 @@ class ExperimentRunner:
         
     def experiment_d_scalability_analysis(self, dataset_file: str):
         """
-        Experiment D: Scalability Analysis
+        Experiment D: Multi-Category Comparison & Scalability Analysis
         
-        Analyzes how performance scales with dataset size.
+        Requirement: Generate roots for multiple dataset sizes and analyze 
+        consistency and scaling patterns.
+        
+        Displays ALL key metrics: Hash Time, Build Time, Memory, Proof Time
+        Also tests root consistency across multiple builds.
         """
         print("\n" + "=" * 70)
-        print("  EXPERIMENT D: Scalability Analysis")
+        print("  EXPERIMENT D: Multi-Category Comparison & Scalability")
         print("=" * 70)
         
         loader = DataLoader()
         
-        sizes = [100, 500, 1000, 5000, 10000, 50000, 100000]
-        results = {"tests": [], "summary": {}}
+        sizes = [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000]
+        results = {"tests": [], "consistency_tests": [], "summary": {}}
         
         print(f"\nAnalyzing scalability across {len(sizes)} different sizes...")
-        print("-" * 70)
-        print(f"{'Size':>10} {'Build(s)':>12} {'Hash/s':>12} {'Proof(ms)':>12} {'Height':>8}")
-        print("-" * 70)
+        print("-" * 100)
+        print(f"{'Size':>10} {'Build(s)':>10} {'Hash(ms)':>10} {'Proof(ms)':>10} {'Mem(MB)':>10} {'Height':>8} {'Consistent':>12}")
+        print("-" * 100)
         
         for size in sizes:
+            # Memory before
+            mem_before = get_memory_mb()
+            
             reviews = loader.load_reviews(dataset_file, limit=size, show_progress=False)
             actual_size = len(reviews)
             
@@ -387,14 +408,28 @@ class ExperimentRunner:
                 print(f"  (Stopping - dataset limit reached at {actual_size:,})")
                 break
             
-            # Build tree
+            # Measure hash time (sample)
+            hash_times = []
+            for r in reviews[:min(100, len(reviews))]:
+                start = time.perf_counter()
+                r.compute_hash()
+                hash_times.append((time.perf_counter() - start) * 1000)
+            avg_hash_time_ms = sum(hash_times) / len(hash_times)
+            
+            # Build tree and measure time
             tree = MerkleTree()
             start = time.perf_counter()
-            tree.build(reviews, show_progress=False)
+            root1 = tree.build(reviews, show_progress=False)
             build_time = time.perf_counter() - start
             
-            # Calculate throughput
-            hashes_per_second = actual_size / build_time if build_time > 0 else 0
+            # Memory after build
+            mem_after = get_memory_mb()
+            memory_used = max(0, mem_after - mem_before)  # Ensure non-negative
+            
+            # Test root consistency - rebuild and compare
+            tree2 = MerkleTree()
+            root2 = tree2.build(reviews, show_progress=False)
+            roots_consistent = root1 == root2
             
             # Measure proof time
             sample_review = reviews[actual_size // 2]
@@ -411,14 +446,20 @@ class ExperimentRunner:
             test_result = {
                 "size": actual_size,
                 "build_time_s": round(build_time, 4),
-                "hashes_per_second": round(hashes_per_second, 2),
+                "hash_time_avg_ms": round(avg_hash_time_ms, 4),
                 "proof_time_ms": round(proof_time, 4),
+                "memory_mb": round(memory_used, 2),
                 "tree_height": tree.height,
-                "total_nodes": tree.total_nodes
+                "total_nodes": tree.total_nodes,
+                "root_hash": root1[:32],
+                "root_consistent": roots_consistent
             }
             results["tests"].append(test_result)
             
-            print(f"{actual_size:>10,} {build_time:>12.4f} {hashes_per_second:>12,.0f} {proof_time:>12.4f} {tree.height:>8}")
+            consistency_str = "✓ YES" if roots_consistent else "✗ NO"
+            print(f"{actual_size:>10,} {build_time:>10.4f} {avg_hash_time_ms:>10.4f} {proof_time:>10.4f} {memory_used:>10.2f} {tree.height:>8} {consistency_str:>12}")
+        
+        print("-" * 100)
         
         # Summary - analyze scalability
         if len(results["tests"]) >= 2:
@@ -431,24 +472,35 @@ class ExperimentRunner:
             expected_ratio = (last["size"] * math.log2(last["size"])) / \
                            (first["size"] * math.log2(first["size"])) if first["size"] > 1 else 0
             
+            # Calculate averages
+            avg_hash = sum(t["hash_time_avg_ms"] for t in results["tests"]) / len(results["tests"])
+            avg_proof = sum(t["proof_time_ms"] for t in results["tests"]) / len(results["tests"])
+            max_memory = max(t["memory_mb"] for t in results["tests"])
+            all_consistent = all(t["root_consistent"] for t in results["tests"])
+            
             results["summary"] = {
                 "total_sizes_tested": len(results["tests"]),
                 "size_range": f"{results['tests'][0]['size']:,} to {results['tests'][-1]['size']:,}",
                 "build_time_range": f"{results['tests'][0]['build_time_s']:.4f}s to {results['tests'][-1]['build_time_s']:.4f}s",
+                "avg_hash_time_ms": round(avg_hash, 4),
+                "avg_proof_time_ms": round(avg_proof, 4),
+                "max_memory_mb": round(max_memory, 2),
                 "size_growth_factor": round(size_ratio, 2),
                 "time_growth_factor": round(time_ratio, 2),
                 "expected_nlogn_factor": round(expected_ratio, 2),
-                "complexity_assessment": "O(n log n)" if time_ratio <= expected_ratio * 1.5 else "Potentially higher"
+                "complexity_assessment": "O(n log n)" if time_ratio <= expected_ratio * 1.5 else "Potentially higher",
+                "all_roots_consistent": all_consistent,
+                "consistency_rate": f"{sum(1 for t in results['tests'] if t['root_consistent'])}/{len(results['tests'])}"
             }
         
         self.results["experiment_d"] = results
         
-        print("-" * 70)
         print(f"\n  Summary:")
         print(f"    Sizes tested: {results['summary']['size_range']}")
-        print(f"    Size growth: {results['summary']['size_growth_factor']}x")
-        print(f"    Time growth: {results['summary']['time_growth_factor']}x")
-        print(f"    Expected (n log n): ~{results['summary']['expected_nlogn_factor']}x")
+        print(f"    Avg Hash Time: {results['summary']['avg_hash_time_ms']:.4f} ms")
+        print(f"    Avg Proof Time: {results['summary']['avg_proof_time_ms']:.4f} ms")
+        print(f"    Peak Memory: {results['summary']['max_memory_mb']:.2f} MB")
+        print(f"    Root Consistency: {results['summary']['consistency_rate']} ({'✓ All consistent' if all_consistent else '✗ Inconsistencies detected'})")
         print(f"    Complexity: {results['summary']['complexity_assessment']}")
         
     def save_experiment_report(self) -> str:

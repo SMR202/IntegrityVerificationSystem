@@ -31,13 +31,18 @@ class AnimatedCanvas(Canvas):
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.configure(bg='#1a1a2e', highlightthickness=0)
-        self.nodes = {}  # Store node positions
+        self.nodes = {}  # Store node positions {node_id: {x, y, oval, text, hash}}
+        self.edges = {}  # Store edge references {edge_id: line_item}
+        self.node_by_hash = {}  # Map hash prefix to node_id
         self.highlighted_path = []
         self.animation_running = False
+        self.animation_speed = 0.5  # seconds per step
         
     def clear(self):
         self.delete("all")
         self.nodes = {}
+        self.edges = {}
+        self.node_by_hash = {}
         self.highlighted_path = []
         
     def draw_node(self, x: int, y: int, text: str, node_id: str, 
@@ -63,8 +68,13 @@ class AnimatedCanvas(Canvas):
         
         self.nodes[node_id] = {
             'x': x, 'y': y, 'oval': oval, 
-            'text': text_item, 'hash': text
+            'text': text_item, 'hash': text,
+            'radius': radius, 'is_leaf': is_leaf,
+            'original_color': color
         }
+        
+        # Map hash prefix for quick lookup
+        self.node_by_hash[text[:16]] = node_id
         
         return oval
     
@@ -75,6 +85,7 @@ class AnimatedCanvas(Canvas):
             x1, y1, x2, y2,
             fill=color, width=2, tags=(edge_id, "edge")
         )
+        self.edges[edge_id] = {'line': line, 'coords': (x1, y1, x2, y2), 'original_color': color}
         self.tag_lower(line)
         return line
     
@@ -91,7 +102,7 @@ class AnimatedCanvas(Canvas):
                     color = colors[i % len(colors)]
                     self.itemconfig(self.nodes[node_id]['oval'], fill=color)
                     self.update()
-                    time.sleep(0.3)
+                    time.sleep(self.animation_speed)
             
             self.animation_running = False
             if callback:
@@ -99,11 +110,170 @@ class AnimatedCanvas(Canvas):
         
         threading.Thread(target=animate, daemon=True).start()
     
+    def animate_proof_verification(self, leaf_hash: str, proof: List[Tuple[str, str]], 
+                                    root_hash: str, status_callback=None, complete_callback=None):
+        """
+        Animate the proof verification path from leaf to root.
+        Shows hash computation at each step with visual effects.
+        """
+        self.animation_running = True
+        self.reset_colors()
+        
+        def animate():
+            import hashlib
+            
+            # Colors for animation stages
+            LEAF_COLOR = "#ff6b6b"      # Red - starting point
+            SIBLING_COLOR = "#feca57"   # Yellow - sibling node
+            COMPUTING_COLOR = "#48dbfb"  # Blue - computing
+            VERIFIED_COLOR = "#1dd1a1"   # Green - verified
+            PATH_COLOR = "#ff6b6b"       # Red - path edge
+            
+            current_hash = leaf_hash
+            
+            # Highlight leaf node
+            if status_callback:
+                status_callback(f"Step 0: Starting at leaf\n  Hash: {current_hash[:32]}...")
+            
+            # Find and highlight leaf
+            leaf_node_id = self.node_by_hash.get(current_hash[:16])
+            if leaf_node_id and leaf_node_id in self.nodes:
+                self._pulse_node(leaf_node_id, LEAF_COLOR, 3)
+            
+            time.sleep(self.animation_speed)
+            
+            # Process each proof step
+            for i, (sibling_hash, direction) in enumerate(proof):
+                if not self.animation_running:
+                    break
+                
+                # Update status
+                dir_name = "LEFT" if direction == "L" else "RIGHT"
+                arrow = "←" if direction == "L" else "→"
+                
+                if status_callback:
+                    status_callback(
+                        f"Step {i+1}: Combine with {dir_name} sibling\n"
+                        f"  Sibling: {sibling_hash[:32]}...\n"
+                        f"  Direction: {arrow}"
+                    )
+                
+                # Highlight sibling node
+                sibling_node_id = self.node_by_hash.get(sibling_hash[:16])
+                if sibling_node_id and sibling_node_id in self.nodes:
+                    self._pulse_node(sibling_node_id, SIBLING_COLOR, 2)
+                
+                time.sleep(self.animation_speed * 0.5)
+                
+                # Compute new hash with animation
+                if direction == "L":
+                    combined = sibling_hash + current_hash
+                else:
+                    combined = current_hash + sibling_hash
+                
+                new_hash = hashlib.sha256(combined.encode()).hexdigest()
+                
+                # Show computing animation
+                if status_callback:
+                    status_callback(
+                        f"Step {i+1}: Computing parent hash...\n"
+                        f"  Input: H({direction == 'L' and 'sibling + current' or 'current + sibling'})\n"
+                        f"  Result: {new_hash[:32]}..."
+                    )
+                
+                # Find and highlight parent node
+                parent_node_id = self.node_by_hash.get(new_hash[:16])
+                if parent_node_id and parent_node_id in self.nodes:
+                    self._pulse_node(parent_node_id, COMPUTING_COLOR, 2)
+                    time.sleep(self.animation_speed * 0.3)
+                    self.itemconfig(self.nodes[parent_node_id]['oval'], fill=VERIFIED_COLOR)
+                
+                current_hash = new_hash
+                time.sleep(self.animation_speed * 0.5)
+            
+            # Final verification
+            verified = current_hash == root_hash
+            
+            if status_callback:
+                if verified:
+                    status_callback(
+                        f"✅ VERIFICATION SUCCESSFUL!\n\n"
+                        f"  Computed Root: {current_hash[:32]}...\n"
+                        f"  Expected Root: {root_hash[:32]}...\n\n"
+                        f"  ✓ Hashes match - proof is valid!"
+                    )
+                else:
+                    status_callback(
+                        f"❌ VERIFICATION FAILED!\n\n"
+                        f"  Computed Root: {current_hash[:32]}...\n"
+                        f"  Expected Root: {root_hash[:32]}...\n\n"
+                        f"  ✗ Hashes do not match!"
+                    )
+            
+            # Highlight root node
+            root_node_id = self.node_by_hash.get(root_hash[:16])
+            if root_node_id and root_node_id in self.nodes:
+                final_color = VERIFIED_COLOR if verified else "#e74c3c"
+                self._pulse_node(root_node_id, final_color, 4)
+            
+            self.animation_running = False
+            
+            if complete_callback:
+                complete_callback(verified)
+        
+        threading.Thread(target=animate, daemon=True).start()
+    
+    def _pulse_node(self, node_id: str, target_color: str, pulses: int = 2):
+        """Create a pulsing effect on a node"""
+        if node_id not in self.nodes:
+            return
+            
+        node = self.nodes[node_id]
+        original_color = node.get('original_color', '#4a9eff')
+        
+        for _ in range(pulses):
+            if not self.animation_running:
+                break
+            self.itemconfig(node['oval'], fill=target_color, outline="#ffffff", width=4)
+            self.update()
+            time.sleep(0.1)
+            self.itemconfig(node['oval'], fill=original_color, outline="#ffffff", width=2)
+            self.update()
+            time.sleep(0.1)
+        
+        # Leave highlighted
+        self.itemconfig(node['oval'], fill=target_color, outline="#ffffff", width=3)
+        self.update()
+    
+    def draw_animated_arrow(self, x1: int, y1: int, x2: int, y2: int, color: str = "#ff6b6b"):
+        """Draw an animated arrow between two points"""
+        # Create arrow with animation
+        arrow = self.create_line(
+            x1, y1, x2, y2,
+            fill=color, width=4, arrow="last", arrowshape=(12, 15, 5),
+            tags=("animated_arrow",)
+        )
+        return arrow
+    
+    def clear_animated_elements(self):
+        """Remove temporary animated elements"""
+        self.delete("animated_arrow")
+        self.delete("hash_display")
+    
     def reset_colors(self):
-        """Reset all node colors"""
+        """Reset all node colors to original"""
         self.animation_running = False
+        self.clear_animated_elements()
         for node_id, node_data in self.nodes.items():
-            self.itemconfig(node_data['oval'], fill="#4a9eff")
+            original = node_data.get('original_color', '#4a9eff')
+            self.itemconfig(node_data['oval'], fill=original, outline="#ffffff", width=2)
+        for edge_id, edge_data in self.edges.items():
+            original = edge_data.get('original_color', '#555555')
+            self.itemconfig(edge_data['line'], fill=original, width=2)
+    
+    def set_animation_speed(self, speed: float):
+        """Set animation speed (seconds per step)"""
+        self.animation_speed = max(0.1, min(2.0, speed))
 
 
 class ProgressWindow(ctk.CTkToplevel):
@@ -291,12 +461,33 @@ class TreeVisualizer(ctk.CTkFrame):
             self._calculate_depth(node.right)
         )
     
-    def animate_proof_path(self, proof: List[Tuple[str, str]], callback=None):
-        """Animate a proof path through the tree"""
-        # For now, just highlight the root
-        if self.tree and self.tree.root:
+    def animate_proof_path(self, proof: List[Tuple[str, str]], leaf_hash: str = None, 
+                           root_hash: str = None, callback=None):
+        """
+        Animate a proof path through the tree visualization.
+        Highlights the verification path from leaf to root.
+        """
+        if not self.tree or not self.tree.root:
+            return
+        
+        # Reset colors first
+        self.canvas.reset_colors()
+        
+        if leaf_hash and root_hash:
+            # Use the advanced animation
+            self.canvas.animate_proof_verification(
+                leaf_hash, proof, root_hash,
+                status_callback=None,
+                complete_callback=callback
+            )
+        else:
+            # Simple path highlight
             node_id = f"node_{id(self.tree.root)}"
             self.canvas.highlight_path([node_id], callback)
+    
+    def reset_animation(self):
+        """Reset animation state"""
+        self.canvas.reset_colors()
 
 
 class DashboardPanel(ctk.CTkFrame):
@@ -519,33 +710,145 @@ class IntegrityPanel(ctk.CTkFrame):
 
 
 class ProofPanel(ctk.CTkFrame):
-    """Proof generation and verification panel"""
+    """Proof generation and verification panel with animated visualization"""
     
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         
         # Title
         ctk.CTkLabel(
-            self, text="🔐 Proof Generation & Verification",
+            self, text="🔐 Proof Generation & Animated Verification",
             font=("Segoe UI", 20, "bold")
-        ).pack(pady=20)
+        ).pack(pady=15)
         
-        # Input section
-        input_frame = ctk.CTkFrame(self)
-        input_frame.pack(fill="x", padx=20, pady=10)
+        # Main container - two columns
+        main_container = ctk.CTkFrame(self, fg_color="transparent")
+        main_container.pack(fill="both", expand=True, padx=10, pady=5)
+        main_container.columnconfigure(0, weight=1)
+        main_container.columnconfigure(1, weight=1)
+        
+        # Left column - Input and proof display
+        left_frame = ctk.CTkFrame(main_container)
+        left_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        
+        # Search mode selection
+        search_mode_frame = ctk.CTkFrame(left_frame)
+        search_mode_frame.pack(fill="x", padx=10, pady=10)
         
         ctk.CTkLabel(
-            input_frame, text="Enter Review Index (0-based):",
-            font=("Segoe UI", 12)
+            search_mode_frame, text="🔍 Search Mode:",
+            font=("Segoe UI", 12, "bold")
         ).pack(anchor="w", padx=10, pady=5)
         
+        # Search mode buttons (segmented control)
+        mode_buttons_frame = ctk.CTkFrame(search_mode_frame, fg_color="transparent")
+        mode_buttons_frame.pack(fill="x", padx=10, pady=5)
+        
+        self.search_mode_var = ctk.StringVar(value="index")
+        
+        self.mode_index_btn = ctk.CTkButton(
+            mode_buttons_frame, text="📍 Index",
+            fg_color="#3498db", hover_color="#2980b9",
+            height=32, width=100, font=("Segoe UI", 11),
+            command=lambda: self._set_search_mode("index")
+        )
+        self.mode_index_btn.pack(side="left", padx=2)
+        
+        self.mode_review_btn = ctk.CTkButton(
+            mode_buttons_frame, text="🆔 Review ID",
+            fg_color="#555555", hover_color="#666666",
+            height=32, width=100, font=("Segoe UI", 11),
+            command=lambda: self._set_search_mode("review_id")
+        )
+        self.mode_review_btn.pack(side="left", padx=2)
+        
+        self.mode_product_btn = ctk.CTkButton(
+            mode_buttons_frame, text="📦 Product ID",
+            fg_color="#555555", hover_color="#666666",
+            height=32, width=100, font=("Segoe UI", 11),
+            command=lambda: self._set_search_mode("product_id")
+        )
+        self.mode_product_btn.pack(side="left", padx=2)
+        
+        # Input section - changes based on mode
+        input_frame = ctk.CTkFrame(left_frame)
+        input_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Index input (default visible)
+        self.index_input_frame = ctk.CTkFrame(input_frame, fg_color="transparent")
+        self.index_input_frame.pack(fill="x")
+        
+        ctk.CTkLabel(
+            self.index_input_frame, text="Enter Review Index (0-based):",
+            font=("Segoe UI", 11)
+        ).pack(anchor="w", padx=10, pady=2)
+        
         self.index_entry = ctk.CTkEntry(
-            input_frame, placeholder_text="e.g., 0, 100, 1000...",
-            height=40, font=("Segoe UI", 12)
+            self.index_input_frame, placeholder_text="e.g., 0, 100, 1000...",
+            height=35, font=("Segoe UI", 11)
         )
         self.index_entry.pack(fill="x", padx=10, pady=5)
         
-        buttons_frame = ctk.CTkFrame(input_frame, fg_color="transparent")
+        # Review ID input (hidden initially)
+        self.review_id_input_frame = ctk.CTkFrame(input_frame, fg_color="transparent")
+        
+        ctk.CTkLabel(
+            self.review_id_input_frame, text="Enter Review ID:",
+            font=("Segoe UI", 11)
+        ).pack(anchor="w", padx=10, pady=2)
+        
+        self.review_id_entry = ctk.CTkEntry(
+            self.review_id_input_frame, placeholder_text="e.g., R3FTHZL6BOP5PE...",
+            height=35, font=("Segoe UI", 11)
+        )
+        self.review_id_entry.pack(fill="x", padx=10, pady=5)
+        
+        # Product ID input (hidden initially)
+        self.product_id_input_frame = ctk.CTkFrame(input_frame, fg_color="transparent")
+        
+        ctk.CTkLabel(
+            self.product_id_input_frame, text="Enter Product ID (ASIN):",
+            font=("Segoe UI", 11)
+        ).pack(anchor="w", padx=10, pady=2)
+        
+        self.product_id_entry = ctk.CTkEntry(
+            self.product_id_input_frame, placeholder_text="e.g., B00000JBAT...",
+            height=35, font=("Segoe UI", 11)
+        )
+        self.product_id_entry.pack(fill="x", padx=10, pady=5)
+        
+        # Search button for product ID
+        self.search_product_btn = ctk.CTkButton(
+            self.product_id_input_frame, text="🔎 Search Product",
+            fg_color="#9b59b6", hover_color="#8e44ad",
+            height=32, font=("Segoe UI", 11)
+        )
+        self.search_product_btn.pack(fill="x", padx=10, pady=5)
+        
+        # Product reviews list (for product ID search)
+        self.product_reviews_frame = ctk.CTkFrame(input_frame, fg_color="transparent")
+        
+        ctk.CTkLabel(
+            self.product_reviews_frame, text="Select a review:",
+            font=("Segoe UI", 11)
+        ).pack(anchor="w", padx=10, pady=2)
+        
+        self.product_reviews_list = ctk.CTkTextbox(
+            self.product_reviews_frame, height=80, font=("Consolas", 9)
+        )
+        self.product_reviews_list.pack(fill="x", padx=10, pady=2)
+        
+        select_frame = ctk.CTkFrame(self.product_reviews_frame, fg_color="transparent")
+        select_frame.pack(fill="x", padx=10, pady=2)
+        
+        ctk.CTkLabel(select_frame, text="Review #:", font=("Segoe UI", 10)).pack(side="left")
+        self.product_review_select = ctk.CTkEntry(
+            select_frame, placeholder_text="1", width=60, height=28
+        )
+        self.product_review_select.pack(side="left", padx=5)
+        
+        # Action buttons
+        buttons_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
         buttons_frame.pack(fill="x", padx=10, pady=10)
         
         self.generate_btn = ctk.CTkButton(
@@ -563,16 +866,87 @@ class ProofPanel(ctk.CTkFrame):
         self.verify_btn.pack(side="left", padx=5, expand=True, fill="x")
         
         # Proof display
-        proof_frame = ctk.CTkFrame(self)
-        proof_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        proof_frame = ctk.CTkFrame(left_frame)
+        proof_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         ctk.CTkLabel(
-            proof_frame, text="📜 Proof Details:",
+            proof_frame, text="📜 Proof Path:",
             font=("Segoe UI", 14, "bold")
-        ).pack(anchor="w", padx=10, pady=10)
+        ).pack(anchor="w", padx=10, pady=5)
         
-        self.proof_text = ctk.CTkTextbox(proof_frame, height=250, font=("Consolas", 10))
+        self.proof_text = ctk.CTkTextbox(proof_frame, height=150, font=("Consolas", 10))
         self.proof_text.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Right column - Animation visualization
+        right_frame = ctk.CTkFrame(main_container)
+        right_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        
+        # Animation header with controls
+        anim_header = ctk.CTkFrame(right_frame, fg_color="transparent")
+        anim_header.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(
+            anim_header, text="🎬 Proof Verification Animation",
+            font=("Segoe UI", 14, "bold")
+        ).pack(side="left", padx=5)
+        
+        # Animation speed control
+        speed_frame = ctk.CTkFrame(anim_header, fg_color="transparent")
+        speed_frame.pack(side="right", padx=5)
+        
+        ctk.CTkLabel(speed_frame, text="Speed:", font=("Segoe UI", 10)).pack(side="left", padx=2)
+        self.speed_var = ctk.StringVar(value="Normal")
+        self.speed_menu = ctk.CTkOptionMenu(
+            speed_frame, 
+            values=["Slow", "Normal", "Fast"],
+            variable=self.speed_var,
+            width=80,
+            command=self._on_speed_change
+        )
+        self.speed_menu.pack(side="left", padx=2)
+        
+        # Animation canvas
+        self.anim_canvas_frame = ctk.CTkFrame(right_frame)
+        self.anim_canvas_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.anim_canvas = Canvas(
+            self.anim_canvas_frame, 
+            bg='#1a1a2e', 
+            highlightthickness=0,
+            height=180
+        )
+        self.anim_canvas.pack(fill="both", expand=True)
+        
+        # Animation status display
+        status_frame = ctk.CTkFrame(right_frame)
+        status_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(
+            status_frame, text="📊 Verification Steps:",
+            font=("Segoe UI", 12, "bold")
+        ).pack(anchor="w", padx=10, pady=5)
+        
+        self.anim_status = ctk.CTkTextbox(status_frame, height=120, font=("Consolas", 9))
+        self.anim_status.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Animation control buttons
+        anim_controls = ctk.CTkFrame(right_frame, fg_color="transparent")
+        anim_controls.pack(fill="x", padx=10, pady=10)
+        
+        self.animate_btn = ctk.CTkButton(
+            anim_controls, text="▶️ Animate Verification",
+            fg_color="#9b59b6", hover_color="#8e44ad",
+            height=40, font=("Segoe UI", 12, "bold")
+        )
+        self.animate_btn.pack(side="left", padx=5, expand=True, fill="x")
+        
+        self.stop_btn = ctk.CTkButton(
+            anim_controls, text="⏹️ Stop",
+            fg_color="#e74c3c", hover_color="#c0392b",
+            height=40, font=("Segoe UI", 12, "bold"),
+            state="disabled"
+        )
+        self.stop_btn.pack(side="left", padx=5, expand=True, fill="x")
         
         # Result
         self.result_label = ctk.CTkLabel(
@@ -584,27 +958,397 @@ class ProofPanel(ctk.CTkFrame):
         # Store current proof
         self.current_proof = None
         self.current_leaf_hash = None
+        self.current_root_hash = None
+        self.animation_running = False
+        
+        # Animation state
+        self._animation_thread = None
+        self._animation_speed = 0.5  # seconds per step
+        
+        # Product search state
+        self.product_reviews_cache = []  # Store found product reviews
+        
+    def _set_search_mode(self, mode: str):
+        """Switch between search modes (index, review_id, product_id)"""
+        self.search_mode_var.set(mode)
+        
+        # Update button colors
+        active_color = "#3498db"
+        inactive_color = "#555555"
+        
+        self.mode_index_btn.configure(fg_color=active_color if mode == "index" else inactive_color)
+        self.mode_review_btn.configure(fg_color=active_color if mode == "review_id" else inactive_color)
+        self.mode_product_btn.configure(fg_color=active_color if mode == "product_id" else inactive_color)
+        
+        # Hide all input frames
+        self.index_input_frame.pack_forget()
+        self.review_id_input_frame.pack_forget()
+        self.product_id_input_frame.pack_forget()
+        self.product_reviews_frame.pack_forget()
+        
+        # Show appropriate input frame and sample data
+        if mode == "index":
+            self.index_input_frame.pack(fill="x")
+        elif mode == "review_id":
+            self.review_id_input_frame.pack(fill="x")
+            self.show_sample_review_ids()
+        elif mode == "product_id":
+            self.product_id_input_frame.pack(fill="x")
+            self.show_sample_product_ids()
     
-    def display_proof(self, proof: list, leaf_hash: str, index: int):
+    def set_sample_data(self, reviews: list):
+        """Store sample data for showing examples to user"""
+        self.sample_reviews = reviews[:20] if reviews else []  # Keep first 20 for samples
+        
+        # Extract unique product IDs
+        seen_products = set()
+        self.sample_products = []
+        for r in reviews[:500]:  # Check first 500 for product diversity
+            asin = getattr(r, 'asin', None)
+            if asin and asin not in seen_products:
+                seen_products.add(asin)
+                self.sample_products.append(asin)
+                if len(self.sample_products) >= 10:
+                    break
+        
+        # Update sample displays
+        self._update_sample_hints()
+    
+    def _update_sample_hints(self):
+        """Update the sample hints in input fields"""
+        if hasattr(self, 'sample_reviews') and self.sample_reviews:
+            # Update Review ID placeholder with sample
+            sample_id = self.sample_reviews[0].review_id
+            self.review_id_entry.configure(placeholder_text=f"e.g., {sample_id[:20]}...")
+        
+        if hasattr(self, 'sample_products') and self.sample_products:
+            # Update Product ID placeholder with sample
+            self.product_id_entry.configure(placeholder_text=f"e.g., {self.sample_products[0]}")
+    
+    def get_search_mode(self) -> str:
+        """Get current search mode"""
+        return self.search_mode_var.get()
+    
+    def show_sample_review_ids(self):
+        """Display sample Review IDs in the proof text area"""
+        if not hasattr(self, 'sample_reviews') or not self.sample_reviews:
+            self.proof_text.delete("1.0", "end")
+            self.proof_text.insert("end", "📋 Load data first to see sample Review IDs")
+            return
+        
+        self.proof_text.delete("1.0", "end")
+        self.proof_text.insert("end", "📋 Sample Review IDs (click to copy):\n")
+        self.proof_text.insert("end", "-" * 50 + "\n\n")
+        
+        for i, review in enumerate(self.sample_reviews[:10], 1):
+            rating = getattr(review, 'rating', 'N/A')
+            title = getattr(review, 'title', '')[:30]
+            self.proof_text.insert(
+                "end",
+                f"{i}. {review.review_id}\n"
+                f"   [{rating}★] {title}...\n\n"
+            )
+    
+    def show_sample_product_ids(self):
+        """Display sample Product IDs in the proof text area"""
+        if not hasattr(self, 'sample_products') or not self.sample_products:
+            self.proof_text.delete("1.0", "end")
+            self.proof_text.insert("end", "📋 Load data first to see sample Product IDs")
+            return
+        
+        self.proof_text.delete("1.0", "end")
+        self.proof_text.insert("end", "📋 Sample Product IDs (ASIN):\n")
+        self.proof_text.insert("end", "-" * 50 + "\n\n")
+        
+        for i, asin in enumerate(self.sample_products[:10], 1):
+            self.proof_text.insert("end", f"{i}. {asin}\n")
+        
+        self.proof_text.insert("end", "\n💡 Enter a Product ID above and click\n")
+        self.proof_text.insert("end", "   'Search Product' to find reviews.")
+    
+    def show_product_reviews(self, reviews: list):
+        """Display found product reviews for selection"""
+        self.product_reviews_cache = reviews
+        self.product_reviews_frame.pack(fill="x")
+        
+        self.product_reviews_list.delete("1.0", "end")
+        for i, review in enumerate(reviews[:10], 1):  # Show max 10
+            rating = getattr(review, 'rating', 'N/A')
+            title = getattr(review, 'title', '')[:35]
+            review_id = getattr(review, 'review_id', 'N/A')[:12]
+            self.product_reviews_list.insert(
+                "end",
+                f"{i}. [{rating}★] {review_id}... - {title}...\n"
+            )
+        
+        if len(reviews) > 10:
+            self.product_reviews_list.insert("end", f"\n... and {len(reviews) - 10} more")
+    
+    def get_selected_product_review(self):
+        """Get the selected review from product search results"""
+        if not self.product_reviews_cache:
+            return None
+        
+        try:
+            idx = int(self.product_review_select.get() or "1") - 1
+            if 0 <= idx < len(self.product_reviews_cache):
+                return self.product_reviews_cache[idx]
+        except ValueError:
+            pass
+        
+        return self.product_reviews_cache[0] if self.product_reviews_cache else None
+        
+    def _on_speed_change(self, choice):
+        """Handle animation speed change"""
+        speeds = {"Slow": 1.0, "Normal": 0.5, "Fast": 0.2}
+        self._animation_speed = speeds.get(choice, 0.5)
+    
+    def display_proof(self, proof: list, leaf_hash: str, index: int, root_hash: str = None,
+                      review_id: str = None, product_id: str = None):
         """Display generated proof"""
         self.current_proof = proof
         self.current_leaf_hash = leaf_hash
+        self.current_root_hash = root_hash
         
         self.proof_text.delete("1.0", "end")
-        self.proof_text.insert("end", f"Proof for index {index}:\n")
-        self.proof_text.insert("end", f"Leaf hash: {leaf_hash}\n\n")
+        
+        # Show appropriate header based on search mode
+        if review_id:
+            self.proof_text.insert("end", f"Proof for Review ID: {review_id[:20]}...\n")
+        elif product_id:
+            self.proof_text.insert("end", f"Proof for Product: {product_id} (idx {index})\n")
+        else:
+            self.proof_text.insert("end", f"Proof for index {index}:\n")
+        
+        self.proof_text.insert("end", f"Leaf hash: {leaf_hash[:48]}...\n\n")
         self.proof_text.insert("end", f"Proof path ({len(proof)} steps):\n")
-        self.proof_text.insert("end", "-" * 70 + "\n")
+        self.proof_text.insert("end", "-" * 55 + "\n")
         
         for i, (sibling_hash, direction) in enumerate(proof):
             arrow = "←" if direction == "L" else "→"
             dir_name = "LEFT" if direction == "L" else "RIGHT"
             self.proof_text.insert(
                 "end",
-                f"Step {i+1}: {arrow} {dir_name:5} | {sibling_hash}\n"
+                f"Step {i+1}: {arrow} {dir_name:5} | {sibling_hash[:40]}...\n"
             )
         
         self.result_label.configure(text="", text_color="#ffffff")
+        self.anim_status.delete("1.0", "end")
+        self.anim_status.insert("end", "Click 'Animate Verification' to see the proof path.\n")
+        
+        # Draw initial visualization
+        self._draw_proof_path_static()
+    
+    def _draw_proof_path_static(self):
+        """Draw static proof path visualization"""
+        self.anim_canvas.delete("all")
+        
+        if not self.current_proof:
+            return
+        
+        # Canvas dimensions
+        width = self.anim_canvas.winfo_width() or 400
+        height = self.anim_canvas.winfo_height() or 180
+        
+        # Draw nodes for proof path
+        num_steps = len(self.current_proof) + 1  # +1 for leaf
+        if num_steps == 0:
+            return
+        
+        node_spacing = min(70, (width - 40) / max(num_steps, 1))
+        start_x = 30
+        center_y = height // 2
+        
+        # Draw leaf node
+        x = start_x
+        self.anim_canvas.create_oval(
+            x - 20, center_y - 20, x + 20, center_y + 20,
+            fill="#4a9eff", outline="#ffffff", width=2, tags="leaf"
+        )
+        self.anim_canvas.create_text(
+            x, center_y, text="Leaf", fill="white", font=("Segoe UI", 8, "bold")
+        )
+        self.anim_canvas.create_text(
+            x, center_y + 35, text=self.current_leaf_hash[:8] + "...",
+            fill="#888888", font=("Consolas", 7)
+        )
+        
+        prev_x = x
+        
+        # Draw proof step nodes
+        for i, (sibling_hash, direction) in enumerate(self.current_proof):
+            x = start_x + (i + 1) * node_spacing
+            
+            # Draw sibling (smaller, offset)
+            sibling_y = center_y - 45 if direction == "L" else center_y + 45
+            self.anim_canvas.create_oval(
+                x - 15 - 20, sibling_y - 15, x - 15 + 15, sibling_y + 15,
+                fill="#555555", outline="#888888", width=1, tags=f"sibling_{i}"
+            )
+            dir_symbol = "L" if direction == "L" else "R"
+            self.anim_canvas.create_text(
+                x - 15, sibling_y, text=dir_symbol, fill="#888888", font=("Segoe UI", 7)
+            )
+            
+            # Draw parent node
+            self.anim_canvas.create_oval(
+                x - 20, center_y - 20, x + 20, center_y + 20,
+                fill="#4a9eff", outline="#ffffff", width=2, tags=f"parent_{i}"
+            )
+            self.anim_canvas.create_text(
+                x, center_y, text=f"H{i+1}", fill="white", font=("Segoe UI", 8, "bold")
+            )
+            
+            # Draw edge from previous to current
+            self.anim_canvas.create_line(
+                prev_x + 20, center_y, x - 20, center_y,
+                fill="#555555", width=2, arrow="last", tags=f"edge_{i}"
+            )
+            
+            # Draw edge from sibling to parent
+            self.anim_canvas.create_line(
+                x - 15, sibling_y + (15 if direction == "L" else -15),
+                x - 5, center_y + (-15 if direction == "L" else 15),
+                fill="#555555", width=1, dash=(3, 2), tags=f"sibling_edge_{i}"
+            )
+            
+            prev_x = x
+        
+        # Draw root indicator
+        x = start_x + num_steps * node_spacing
+        self.anim_canvas.create_text(
+            prev_x + 40, center_y, text="→ Root",
+            fill="#1dd1a1", font=("Segoe UI", 10, "bold")
+        )
+    
+    def animate_proof(self, tree_canvas: AnimatedCanvas = None):
+        """Start animated proof verification"""
+        if not self.current_proof or not self.current_leaf_hash:
+            return
+        
+        self.animation_running = True
+        self.animate_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        
+        def update_status(text):
+            self.anim_status.delete("1.0", "end")
+            self.anim_status.insert("end", text)
+            self.anim_status.update()
+        
+        def animation_thread():
+            import hashlib
+            
+            # Colors
+            LEAF_COLOR = "#ff6b6b"
+            SIBLING_COLOR = "#feca57"
+            COMPUTING_COLOR = "#48dbfb"
+            VERIFIED_COLOR = "#1dd1a1"
+            
+            current_hash = self.current_leaf_hash
+            
+            # Highlight leaf
+            update_status(
+                f"🔵 Starting verification...\n\n"
+                f"Leaf hash:\n{current_hash[:48]}..."
+            )
+            self.anim_canvas.itemconfig("leaf", fill=LEAF_COLOR)
+            self.anim_canvas.update()
+            time.sleep(self._animation_speed)
+            
+            # Process each step
+            for i, (sibling_hash, direction) in enumerate(self.current_proof):
+                if not self.animation_running:
+                    break
+                
+                dir_name = "LEFT" if direction == "L" else "RIGHT"
+                
+                # Highlight sibling
+                update_status(
+                    f"Step {i+1}/{len(self.current_proof)}\n\n"
+                    f"Combining with {dir_name} sibling:\n"
+                    f"{sibling_hash[:40]}..."
+                )
+                self.anim_canvas.itemconfig(f"sibling_{i}", fill=SIBLING_COLOR, outline="#ffffff")
+                self.anim_canvas.itemconfig(f"sibling_edge_{i}", fill=SIBLING_COLOR, width=2)
+                self.anim_canvas.update()
+                time.sleep(self._animation_speed * 0.6)
+                
+                # Compute hash
+                if direction == "L":
+                    combined = sibling_hash + current_hash
+                else:
+                    combined = current_hash + sibling_hash
+                
+                new_hash = hashlib.sha256(combined.encode()).hexdigest()
+                
+                # Show computing
+                update_status(
+                    f"Step {i+1}/{len(self.current_proof)}\n\n"
+                    f"Computing: SHA256({'sibling + current' if direction == 'L' else 'current + sibling'})\n"
+                    f"Result:\n{new_hash[:40]}..."
+                )
+                self.anim_canvas.itemconfig(f"parent_{i}", fill=COMPUTING_COLOR)
+                self.anim_canvas.itemconfig(f"edge_{i}", fill=COMPUTING_COLOR, width=3)
+                self.anim_canvas.update()
+                time.sleep(self._animation_speed * 0.4)
+                
+                # Mark verified
+                self.anim_canvas.itemconfig(f"parent_{i}", fill=VERIFIED_COLOR)
+                self.anim_canvas.itemconfig(f"edge_{i}", fill=VERIFIED_COLOR)
+                self.anim_canvas.update()
+                
+                current_hash = new_hash
+                time.sleep(self._animation_speed * 0.3)
+            
+            # Final verification
+            if self.animation_running:
+                verified = (self.current_root_hash is None or 
+                           current_hash == self.current_root_hash)
+                
+                if verified:
+                    update_status(
+                        f"✅ VERIFICATION COMPLETE!\n\n"
+                        f"Computed root:\n{current_hash[:40]}...\n\n"
+                        f"Proof is VALID!"
+                    )
+                    self.result_label.configure(
+                        text="✅ Proof Verified Successfully!",
+                        text_color="#1dd1a1"
+                    )
+                else:
+                    update_status(
+                        f"❌ VERIFICATION FAILED!\n\n"
+                        f"Computed: {current_hash[:32]}...\n"
+                        f"Expected: {self.current_root_hash[:32] if self.current_root_hash else 'N/A'}..."
+                    )
+                    self.result_label.configure(
+                        text="❌ Proof Verification Failed!",
+                        text_color="#e74c3c"
+                    )
+                
+                # Also animate on tree canvas if provided
+                if tree_canvas and hasattr(tree_canvas, 'animate_proof_verification'):
+                    tree_canvas.animate_proof_verification(
+                        self.current_leaf_hash,
+                        self.current_proof,
+                        self.current_root_hash or current_hash,
+                        status_callback=None,
+                        complete_callback=None
+                    )
+            
+            self.animation_running = False
+            self.animate_btn.configure(state="normal")
+            self.stop_btn.configure(state="disabled")
+        
+        self._animation_thread = threading.Thread(target=animation_thread, daemon=True)
+        self._animation_thread.start()
+    
+    def stop_animation(self):
+        """Stop the current animation"""
+        self.animation_running = False
+        self.animate_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled")
+        self.anim_status.insert("end", "\n\n⏹️ Animation stopped by user.")
     
     def show_result(self, success: bool, time_ms: float = 0):
         """Show verification result"""
@@ -906,6 +1650,9 @@ class MerkleTreeGUI(ctk.CTk):
         # Proofs panel
         self.proofs.generate_btn.configure(command=self.generate_proof)
         self.proofs.verify_btn.configure(command=self.verify_proof)
+        self.proofs.animate_btn.configure(command=self.animate_proof)
+        self.proofs.stop_btn.configure(command=self.stop_proof_animation)
+        self.proofs.search_product_btn.configure(command=self.search_product)
         
         # Tamper panel
         self.tamper.simulate_btn.configure(command=self.simulate_tamper)
@@ -996,6 +1743,9 @@ class MerkleTreeGUI(ctk.CTk):
         process = psutil.Process()
         mem_mb = process.memory_info().rss / 1024 / 1024
         self.memory_label.configure(text=f"Memory: {mem_mb:.1f} MB")
+        
+        # Set sample data for proof panel
+        self.proofs.set_sample_data(self.reviews)
     
     def build_tree(self):
         """Build Merkle tree from loaded data"""
@@ -1129,44 +1879,127 @@ class MerkleTreeGUI(ctk.CTk):
             messagebox.showinfo("Info", "Please build tree first")
     
     def generate_proof(self):
-        """Generate membership proof"""
+        """Generate membership proof based on search mode (index, review_id, or product_id)"""
         if not self.tree or not self.tree.root:
             messagebox.showwarning("Warning", "Please build tree first!")
             return
         
-        try:
-            index = int(self.proofs.index_entry.get())
-        except ValueError:
-            messagebox.showerror("Error", "Please enter a valid index")
+        search_mode = self.proofs.get_search_mode()
+        review = None
+        index = None
+        review_id = None
+        product_id = None
+        
+        if search_mode == "index":
+            # Search by index
+            try:
+                index = int(self.proofs.index_entry.get())
+            except ValueError:
+                messagebox.showerror("Error", "Please enter a valid index")
+                return
+            
+            if index < 0 or index >= len(self.reviews):
+                messagebox.showerror("Error", f"Index must be 0-{len(self.reviews)-1}")
+                return
+            
+            review = self.reviews[index]
+            review_id = review.review_id
+            
+        elif search_mode == "review_id":
+            # Search by Review ID
+            search_id = self.proofs.review_id_entry.get().strip()
+            if not search_id:
+                messagebox.showerror("Error", "Please enter a Review ID")
+                return
+            
+            # Find review by ID
+            review = None
+            for i, r in enumerate(self.reviews):
+                if r.review_id == search_id or r.review_id.startswith(search_id):
+                    review = r
+                    index = i
+                    break
+            
+            if not review:
+                messagebox.showerror("Error", f"Review ID '{search_id}' not found in dataset")
+                return
+            
+            review_id = review.review_id
+            
+        elif search_mode == "product_id":
+            # Search by Product ID (ASIN)
+            selected_review = self.proofs.get_selected_product_review()
+            if not selected_review:
+                messagebox.showerror("Error", "Please search for a product and select a review first")
+                return
+            
+            review = selected_review
+            review_id = review.review_id
+            product_id = getattr(review, 'asin', None)
+            
+            # Find index
+            for i, r in enumerate(self.reviews):
+                if r.review_id == review_id:
+                    index = i
+                    break
+        
+        if not review:
+            messagebox.showerror("Error", "Could not find review")
             return
         
-        if index < 0 or index >= len(self.reviews):
-            messagebox.showerror("Error", f"Index must be 0-{len(self.reviews)-1}")
-            return
-        
-        # Get review by index
-        review = self.reviews[index]
-        review_id = review.review_id
-        
+        # Generate proof
         gen_start = time.perf_counter()
         proof = self.tree.generate_proof(review_id)
         gen_time = time.perf_counter() - gen_start
         
         if not proof:
-            messagebox.showerror("Error", f"Could not generate proof for index {index}")
+            messagebox.showerror("Error", f"Could not generate proof for review {review_id[:16]}...")
             return
         
         leaf_hash = review.raw_hash or review.compute_hash()
-        self.proofs.display_proof(proof, leaf_hash, index)
+        root_hash = self.tree.root.hash
+        
+        # Display proof with appropriate context
+        self.proofs.display_proof(
+            proof, leaf_hash, index, root_hash,
+            review_id=review_id if search_mode == "review_id" else None,
+            product_id=product_id if search_mode == "product_id" else None
+        )
         
         # Store review info for verification
         self.proofs.current_review_id = review_id
         
-        self.set_status(f"Proof generated for index {index} in {gen_time*1000:.3f}ms")
-        self.performance.update_metric("proof_time", f"{gen_time*1000:.3f}ms")
+        # Status message based on search mode
+        if search_mode == "review_id":
+            self.set_status(f"Proof generated for Review {review_id[:16]}... in {gen_time*1000:.3f}ms")
+        elif search_mode == "product_id":
+            self.set_status(f"Proof generated for Product {product_id} review in {gen_time*1000:.3f}ms")
+        else:
+            self.set_status(f"Proof generated for index {index} in {gen_time*1000:.3f}ms")
         
-        # Animate in tree view
-        self.tree_viz.animate_proof_path(proof)
+        self.performance.update_metric("proof_time", f"{gen_time*1000:.3f}ms")
+    
+    def search_product(self):
+        """Search for reviews by Product ID (ASIN)"""
+        if not self.reviews:
+            messagebox.showwarning("Warning", "Please load data first!")
+            return
+        
+        product_id = self.proofs.product_id_entry.get().strip()
+        if not product_id:
+            messagebox.showerror("Error", "Please enter a Product ID (ASIN)")
+            return
+        
+        # Find reviews for this product
+        product_reviews = [r for r in self.reviews if getattr(r, 'asin', '') == product_id]
+        
+        if not product_reviews:
+            messagebox.showinfo("Not Found", f"No reviews found for product '{product_id}'")
+            return
+        
+        # Show the found reviews
+        self.proofs.show_product_reviews(product_reviews)
+        self.set_status(f"Found {len(product_reviews)} reviews for product {product_id}")
     
     def verify_proof(self):
         """Verify current proof"""
@@ -1187,6 +2020,21 @@ class MerkleTreeGUI(ctk.CTk):
         
         self.proofs.show_result(result, verify_time * 1000)
         self.performance.update_metric("verify_time", f"{verify_time*1000:.3f}ms")
+    
+    def animate_proof(self):
+        """Animate proof verification path"""
+        if not self.proofs.current_proof or not self.proofs.current_leaf_hash:
+            messagebox.showwarning("Warning", "Please generate a proof first!")
+            return
+        
+        # Start animation in proof panel
+        self.proofs.animate_proof(self.tree_viz.canvas if self.tree_viz else None)
+        self.set_status("Animating proof verification path...")
+    
+    def stop_proof_animation(self):
+        """Stop proof animation"""
+        self.proofs.stop_animation()
+        self.set_status("Animation stopped")
     
     def simulate_tamper(self):
         """Simulate tampering"""

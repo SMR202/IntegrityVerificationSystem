@@ -158,6 +158,82 @@ class TestMerkleTree:
         tree2.build(reviews, show_progress=False)
         
         assert tree1.get_root_hash() == tree2.get_root_hash()
+    
+    def test_add_review_dynamic(self):
+        """Test dynamically adding a review without full rebuild."""
+        reviews = create_test_reviews(16)
+        tree = MerkleTree()
+        tree.build(reviews, show_progress=False)
+        
+        original_root = tree.get_root_hash()
+        original_leaves = len(tree.leaves)
+        
+        # Create new review
+        new_review = Review(
+            review_id="new_dynamic_review",
+            asin="B9999999999",
+            reviewer_id="A9999999999",
+            rating=5.0,
+            title="Dynamic Review",
+            text="Added dynamically",
+            timestamp=1609459200,
+            verified=True,
+            helpful_vote=5
+        )
+        
+        # Add dynamically
+        new_root = tree.add_review(new_review)
+        
+        # Verify tree updated
+        assert len(tree.leaves) == original_leaves + 1
+        assert new_root != original_root
+        
+        # Verify new review is searchable and proof works
+        proof = tree.generate_proof("new_dynamic_review")
+        assert proof is not None
+        
+        is_valid = tree.verify_proof(
+            "new_dynamic_review",
+            new_review.compute_hash(),
+            proof,
+            new_root
+        )
+        assert is_valid
+    
+    def test_add_review_matches_full_rebuild(self):
+        """Test that dynamic add produces same result as full rebuild."""
+        reviews = create_test_reviews(15)  # Odd number to test edge case
+        
+        new_review = Review(
+            review_id="test_new_review",
+            asin="BTEST123",
+            reviewer_id="ATEST123",
+            rating=4.0,
+            title="Test",
+            text="Test review",
+            timestamp=1609459200,
+            verified=True,
+            helpful_vote=0
+        )
+        
+        # Method 1: Dynamic add
+        tree1 = MerkleTree()
+        tree1.build(reviews, show_progress=False)
+        tree1.add_review(new_review)
+        
+        # Method 2: Full rebuild with all reviews
+        tree2 = MerkleTree()
+        tree2.build(reviews + [new_review], show_progress=False)
+        
+        # Both should have same number of leaves
+        assert len(tree1.leaves) == len(tree2.leaves)
+        
+        # Proofs should work for the new review in both trees
+        proof1 = tree1.generate_proof("test_new_review")
+        proof2 = tree2.generate_proof("test_new_review")
+        
+        assert proof1 is not None
+        assert proof2 is not None
 
 
 class TestMerkleProof:

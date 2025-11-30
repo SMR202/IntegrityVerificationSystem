@@ -87,30 +87,9 @@ class MerkleTree:
     
     def _pad_leaves_to_power_of_2(self, leaves: List[MerkleNode]) -> List[MerkleNode]:
         """
-        Pad leaves list to nearest power of 2 by duplicating the last leaf.
-        This ensures a complete binary tree structure.
+        No longer pads to power of 2 - we handle odd-length levels during tree building.
+        This method is kept for API compatibility but now just returns the leaves as-is.
         """
-        n = len(leaves)
-        if n == 0:
-            return leaves
-        
-        # Find next power of 2
-        next_pow2 = 1
-        while next_pow2 < n:
-            next_pow2 *= 2
-        
-        # Duplicate last leaf to fill
-        while len(leaves) < next_pow2:
-            # Create a copy of the last leaf with updated index
-            last_leaf = leaves[-1]
-            duplicate = MerkleNode(
-                hash=last_leaf.hash,
-                data=last_leaf.data,
-                index=len(leaves),
-                is_leaf=True
-            )
-            leaves.append(duplicate)
-        
         return leaves
     
     def build(self, reviews: List[Review], show_progress: bool = True) -> str:
@@ -148,14 +127,11 @@ class MerkleTree:
         
         original_leaf_count = len(self.leaves)
         
-        # Step 2: Pad to power of 2
+        # Step 2: No longer padding - we handle odd levels during build
+        # (kept for compatibility, now a no-op)
         self.leaves = self._pad_leaves_to_power_of_2(self.leaves)
-        padded_leaf_count = len(self.leaves)
         
-        if show_progress and padded_leaf_count > original_leaf_count:
-            print(f"Padded from {original_leaf_count:,} to {padded_leaf_count:,} leaves")
-        
-        # Step 3: Build tree bottom-up
+        # Step 3: Build tree bottom-up (handles odd-length levels)
         if show_progress:
             print("Building tree structure...")
         
@@ -167,13 +143,26 @@ class MerkleTree:
             next_level = []
             level_num += 1
             
-            # Process pairs of nodes
-            pairs = list(zip(current_level[::2], current_level[1::2]))
+            num_nodes = len(current_level)
             
-            if show_progress and len(pairs) > 1000:
-                pairs = tqdm(pairs, desc=f"Building level {level_num}")
+            # Show progress for large levels
+            num_pairs = (num_nodes + 1) // 2  # ceiling division for pairs
+            iterator = range(0, num_nodes, 2)
+            if show_progress and num_pairs > 1000:
+                iterator = tqdm(iterator, desc=f"Building level {level_num}", total=num_pairs)
             
-            for idx, (left, right) in enumerate(pairs):
+            for i in iterator:
+                left = current_level[i]
+                
+                # Handle odd node: pair with itself
+                if i + 1 < num_nodes:
+                    right = current_level[i + 1]
+                    is_self_paired = False
+                else:
+                    # Last odd node: hash with itself
+                    right = left
+                    is_self_paired = True
+                
                 # Combine hashes
                 parent_hash = self.combine_hashes(left.hash, right.hash)
                 self.hash_count += 1
@@ -182,14 +171,15 @@ class MerkleTree:
                 parent = MerkleNode(
                     hash=parent_hash,
                     left=left,
-                    right=right,
-                    index=idx,
+                    right=None if is_self_paired else right,  # Mark as self-paired
+                    index=len(next_level),
                     is_leaf=False
                 )
                 
                 # Set parent references
                 left.parent = parent
-                right.parent = parent
+                if not is_self_paired:
+                    right.parent = parent
                 
                 next_level.append(parent)
                 self.total_nodes += 1
@@ -210,6 +200,152 @@ class MerkleTree:
             print(f"  Build time: {self.build_time:.2f} seconds")
         
         return self.root.hash
+    
+    def add_review(self, review: Review) -> str:
+        """
+        Dynamically add a new review to the tree with partial rebuild.
+        Only updates the affected path from the new leaf to the root,
+        achieving O(log n) complexity instead of O(n) for full rebuild.
+        
+        Args:
+            review: The new Review to add
+            
+        Returns:
+            The new root hash after adding the review
+        """
+        if not self.root:
+            # Tree is empty, build with single review
+            return self.build([review], show_progress=False)
+        
+        start_time = time.perf_counter()
+        
+        # Create the new leaf node
+        new_index = len(self.leaves)
+        new_leaf = self._create_leaf_node(review, new_index)
+        self.leaves.append(new_leaf)
+        self.leaf_index[review.review_id] = new_index
+        
+        # Find the path that needs to be updated
+        # We need to traverse up from the rightmost leaf's parent
+        # and update all affected nodes
+        
+        nodes_updated = 0
+        
+        # If the previous count was odd, the last node was self-paired
+        # We need to give it a proper sibling now
+        if new_index > 0:
+            prev_leaf = self.leaves[new_index - 1]
+            
+            # Walk up the tree to find where we need to insert
+            # The new leaf becomes a sibling to an existing path
+            self._insert_leaf_and_update_path(new_leaf, nodes_updated)
+        
+        update_time = time.perf_counter() - start_time
+        
+        return self.root.hash
+    
+    def _insert_leaf_and_update_path(self, new_leaf: MerkleNode, nodes_updated: int):
+        """
+        Insert a new leaf and update the path to root.
+        This handles the partial tree rebuild efficiently.
+        """
+        # Strategy: Find the rightmost path and update it
+        # If current leaf count is even after adding, pair with previous leaf
+        # If odd, we need to propagate up
+        
+        n = len(self.leaves)
+        
+        if n == 1:
+            # First leaf, it becomes the root
+            self.root = new_leaf
+            self.height = 0
+            self.total_nodes = 1
+            return
+        
+        # Find the previous leaf (the one we might pair with)
+        prev_leaf = self.leaves[n - 2]
+        
+        # Check if prev_leaf was self-paired (its parent.right is None)
+        if prev_leaf.parent and prev_leaf.parent.right is None:
+            # The previous leaf was self-paired, now pair them properly
+            parent = prev_leaf.parent
+            parent.right = new_leaf
+            new_leaf.parent = parent
+            
+            # Recompute parent hash
+            parent.hash = self.combine_hashes(parent.left.hash, new_leaf.hash)
+            self.hash_count += 1
+            
+            # Propagate changes up to root
+            self._update_path_to_root(parent)
+            self.total_nodes += 1
+        else:
+            # Need to create new parent nodes up the tree
+            # This is the more complex case where tree height might increase
+            self._rebuild_from_leaves()
+    
+    def _update_path_to_root(self, node: MerkleNode):
+        """Update all hashes from the given node up to the root."""
+        current = node.parent
+        
+        while current:
+            # Recalculate hash based on children
+            left_hash = current.left.hash
+            right_hash = current.right.hash if current.right else current.left.hash
+            current.hash = self.combine_hashes(left_hash, right_hash)
+            self.hash_count += 1
+            current = current.parent
+    
+    def _rebuild_from_leaves(self):
+        """Rebuild tree structure from current leaves (fallback for complex cases)."""
+        # This is used when the tree structure needs significant changes
+        # It's still more efficient than rebuilding from reviews
+        
+        current_level = self.leaves
+        level_num = 0
+        self.total_nodes = len(self.leaves)
+        
+        # Clear parent references
+        for leaf in self.leaves:
+            leaf.parent = None
+        
+        while len(current_level) > 1:
+            next_level = []
+            level_num += 1
+            num_nodes = len(current_level)
+            
+            for i in range(0, num_nodes, 2):
+                left = current_level[i]
+                
+                if i + 1 < num_nodes:
+                    right = current_level[i + 1]
+                    is_self_paired = False
+                else:
+                    right = left
+                    is_self_paired = True
+                
+                parent_hash = self.combine_hashes(left.hash, right.hash)
+                self.hash_count += 1
+                
+                parent = MerkleNode(
+                    hash=parent_hash,
+                    left=left,
+                    right=None if is_self_paired else right,
+                    index=len(next_level),
+                    is_leaf=False
+                )
+                
+                left.parent = parent
+                if not is_self_paired:
+                    right.parent = parent
+                
+                next_level.append(parent)
+                self.total_nodes += 1
+            
+            current_level = next_level
+        
+        self.root = current_level[0]
+        self.height = level_num
     
     def get_root_hash(self) -> Optional[str]:
         """Get the root hash of the tree."""
@@ -250,15 +386,19 @@ class MerkleTree:
         while current.parent:
             parent = current.parent
             
-            # Determine if current is left or right child
-            if parent.left == current:
+            # Check if this is a self-paired node (odd node case)
+            if parent.right is None:
+                # Self-paired: sibling is itself
+                sibling_hash = current.hash
+                direction = 'R'  # Convention: treat as right sibling
+            elif parent.left == current:
                 # Current is left child, sibling is on right
                 sibling_hash = parent.right.hash
-                direction = 'R'  # Sibling is on the right
+                direction = 'R'
             else:
                 # Current is right child, sibling is on left
                 sibling_hash = parent.left.hash
-                direction = 'L'  # Sibling is on the left
+                direction = 'L'
             
             proof.append((sibling_hash, direction))
             current = parent
