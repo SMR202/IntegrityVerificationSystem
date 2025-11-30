@@ -1,0 +1,3 @@
+# This folder stores Amazon review datasets
+# Download from: https://nijianmo.github.io/amazon/index.html
+# Place JSON files here (e.g., Electronics.jsonl, Books.jsonl)

@@ -1,0 +1,19 @@
+{
+  "dataset_name": "Video_Games_10k",
+  "record_count": 10000,
+  "timestamp": "2025-11-30T09:49:04.481819",
+  "total_build_time_seconds": 0.13154129998292774,
+  "hash_time_avg_ms": 0.0035419000778347254,
+  "hash_time_total_seconds": 0.0035419000778347254,
+  "tree_construction_seconds": 0.12799939990509301,
+  "peak_memory_mb": 42.484375,
+  "memory_before_mb": 31.2734375,
+  "memory_after_mb": 42.484375,
+  "memory_delta_mb": 11.2109375,
+  "tree_height": 14,
+  "total_nodes": 32767,
+  "leaf_count": 16384,
+  "proof_generation_avg_ms": 0.01654199993936345,
+  "proof_verification_avg_ms": 0.02198400063207373,
+  "proof_length_avg": 14
+}

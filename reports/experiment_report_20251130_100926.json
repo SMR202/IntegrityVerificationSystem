@@ -1,0 +1,287 @@
+{
+  "experiment_metadata": {
+    "dataset": "Video_Games.json",
+    "started_at": "2025-11-30T10:08:29.555477",
+    "python_version": "3.10.9 (tags/v3.10.9:1dd9be6, Dec  6 2022, 20:01:21) [MSC v.1934 64 bit (AMD64)]",
+    "completed_at": "2025-11-30T10:09:26.734710"
+  },
+  "experiment_a": {
+    "tests": [
+      {
+        "size": 1000,
+        "build_time_s": 0.0079,
+        "rebuild_time_s": 0.0079,
+        "tree_height": 10,
+        "total_nodes": 2047,
+        "root_hash_first_32": "fdc25f2e278b02cd1466340939a44fa1",
+        "roots_match": true,
+        "status": "PASS"
+      },
+      {
+        "size": 10000,
+        "build_time_s": 0.1194,
+        "rebuild_time_s": 0.1165,
+        "tree_height": 14,
+        "total_nodes": 32767,
+        "root_hash_first_32": "52e1ecc04ddf4d9f467ae11ac5b9d3ed",
+        "roots_match": true,
+        "status": "PASS"
+      },
+      {
+        "size": 100000,
+        "build_time_s": 1.1941,
+        "rebuild_time_s": 1.1741,
+        "tree_height": 17,
+        "total_nodes": 262143,
+        "root_hash_first_32": "c4fdaed2acbd236e05eea041b91918f9",
+        "roots_match": true,
+        "status": "PASS"
+      }
+    ],
+    "summary": {
+      "total_tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "overall_status": "PASS"
+    }
+  },
+  "experiment_b": {
+    "tests": [
+      {
+        "test": "no_tampering",
+        "tampering_detected": false,
+        "expected_detected": false,
+        "status": "PASS"
+      },
+      {
+        "test": "modification_pos_0",
+        "position": 0,
+        "tampering_detected": true,
+        "detected_type": "MODIFICATION",
+        "expected_type": "MODIFICATION",
+        "status": "PASS"
+      },
+      {
+        "test": "modification_pos_5000",
+        "position": 5000,
+        "tampering_detected": true,
+        "detected_type": "MODIFICATION",
+        "expected_type": "MODIFICATION",
+        "status": "PASS"
+      },
+      {
+        "test": "modification_pos_9999",
+        "position": 9999,
+        "tampering_detected": true,
+        "detected_type": "MODIFICATION",
+        "expected_type": "MODIFICATION",
+        "status": "PASS"
+      },
+      {
+        "test": "deletion_pos_0",
+        "position": 0,
+        "tampering_detected": true,
+        "detected_type": "DELETION",
+        "expected_type": "DELETION",
+        "status": "PASS"
+      },
+      {
+        "test": "deletion_pos_5000",
+        "position": 5000,
+        "tampering_detected": true,
+        "detected_type": "DELETION",
+        "expected_type": "DELETION",
+        "status": "PASS"
+      },
+      {
+        "test": "deletion_pos_9999",
+        "position": 9999,
+        "tampering_detected": true,
+        "detected_type": "DELETION",
+        "expected_type": "DELETION",
+        "status": "PASS"
+      },
+      {
+        "test": "insertion_pos_0",
+        "position": "end",
+        "tampering_detected": true,
+        "detected_type": "INSERTION",
+        "expected_type": "INSERTION",
+        "status": "PASS"
+      },
+      {
+        "test": "insertion_pos_5000",
+        "position": 5000,
+        "tampering_detected": true,
+        "detected_type": "INSERTION",
+        "expected_type": "INSERTION",
+        "status": "PASS"
+      },
+      {
+        "test": "insertion_pos_None",
+        "position": "end",
+        "tampering_detected": true,
+        "detected_type": "INSERTION",
+        "expected_type": "INSERTION",
+        "status": "PASS"
+      }
+    ],
+    "summary": {
+      "total_tests": 10,
+      "passed": 10,
+      "failed": 0,
+      "overall_status": "PASS"
+    }
+  },
+  "experiment_c": {
+    "tests": [
+      {
+        "size": 1000,
+        "sample_size": 100,
+        "tree_height": 10,
+        "proof_length": 10,
+        "generation_avg_ms": 0.0104,
+        "generation_max_ms": 0.0214,
+        "verification_avg_ms": 0.0172,
+        "verification_max_ms": 0.0297,
+        "total_avg_ms": 0.0276,
+        "total_max_ms": 0.0478,
+        "requirement_100ms": "PASS",
+        "status": "PASS"
+      },
+      {
+        "size": 10000,
+        "sample_size": 100,
+        "tree_height": 14,
+        "proof_length": 14,
+        "generation_avg_ms": 0.0149,
+        "generation_max_ms": 0.0209,
+        "verification_avg_ms": 0.0226,
+        "verification_max_ms": 0.0886,
+        "total_avg_ms": 0.0375,
+        "total_max_ms": 0.1036,
+        "requirement_100ms": "PASS",
+        "status": "PASS"
+      },
+      {
+        "size": 100000,
+        "sample_size": 100,
+        "tree_height": 17,
+        "proof_length": 17,
+        "generation_avg_ms": 0.0196,
+        "generation_max_ms": 0.0442,
+        "verification_avg_ms": 0.0263,
+        "verification_max_ms": 0.0478,
+        "total_avg_ms": 0.0459,
+        "total_max_ms": 0.0899,
+        "requirement_100ms": "PASS",
+        "status": "PASS"
+      },
+      {
+        "size": 500000,
+        "sample_size": 100,
+        "tree_height": 19,
+        "proof_length": 19,
+        "generation_avg_ms": 0.025,
+        "generation_max_ms": 0.0544,
+        "verification_avg_ms": 0.0306,
+        "verification_max_ms": 0.041,
+        "total_avg_ms": 0.0557,
+        "total_max_ms": 0.0862,
+        "requirement_100ms": "PASS",
+        "status": "PASS"
+      },
+      {
+        "size": 1000000,
+        "sample_size": 100,
+        "tree_height": 20,
+        "proof_length": 20,
+        "generation_avg_ms": 0.0248,
+        "generation_max_ms": 0.0585,
+        "verification_avg_ms": 0.0312,
+        "verification_max_ms": 0.0341,
+        "total_avg_ms": 0.056,
+        "total_max_ms": 0.091,
+        "requirement_100ms": "PASS",
+        "status": "PASS"
+      }
+    ],
+    "summary": {
+      "total_tests": 5,
+      "passed": 5,
+      "failed": 0,
+      "overall_status": "PASS",
+      "fastest_avg_ms": 0.0276,
+      "slowest_avg_ms": 0.056
+    }
+  },
+  "experiment_d": {
+    "tests": [
+      {
+        "size": 100,
+        "build_time_s": 0.0009,
+        "hashes_per_second": 112637.98,
+        "proof_time_ms": 0.025,
+        "tree_height": 7,
+        "total_nodes": 255
+      },
+      {
+        "size": 500,
+        "build_time_s": 0.0048,
+        "hashes_per_second": 103878.84,
+        "proof_time_ms": 0.0322,
+        "tree_height": 9,
+        "total_nodes": 1023
+      },
+      {
+        "size": 1000,
+        "build_time_s": 0.0082,
+        "hashes_per_second": 122268.82,
+        "proof_time_ms": 0.0342,
+        "tree_height": 10,
+        "total_nodes": 2047
+      },
+      {
+        "size": 5000,
+        "build_time_s": 0.0517,
+        "hashes_per_second": 96639.46,
+        "proof_time_ms": 0.0452,
+        "tree_height": 13,
+        "total_nodes": 16383
+      },
+      {
+        "size": 10000,
+        "build_time_s": 0.1024,
+        "hashes_per_second": 97618.88,
+        "proof_time_ms": 0.0475,
+        "tree_height": 14,
+        "total_nodes": 32767
+      },
+      {
+        "size": 50000,
+        "build_time_s": 1.9728,
+        "hashes_per_second": 25344.7,
+        "proof_time_ms": 0.0543,
+        "tree_height": 16,
+        "total_nodes": 131071
+      },
+      {
+        "size": 100000,
+        "build_time_s": 1.3574,
+        "hashes_per_second": 73668.06,
+        "proof_time_ms": 0.06,
+        "tree_height": 17,
+        "total_nodes": 262143
+      }
+    ],
+    "summary": {
+      "total_sizes_tested": 7,
+      "size_range": "100 to 100,000",
+      "build_time_range": "0.0009s to 1.3574s",
+      "size_growth_factor": 1000.0,
+      "time_growth_factor": 1508.22,
+      "expected_nlogn_factor": 2500.0,
+      "complexity_assessment": "O(n log n)"
+    }
+  }
+}
