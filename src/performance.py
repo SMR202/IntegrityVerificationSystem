@@ -316,6 +316,15 @@ class PerformanceMonitor:
         print(f"Metrics saved to: {filepath}")
         return filepath
     
+    def get_all_metrics(self) -> List[Dict[str, Any]]:
+        """
+        Get all metrics from history as a list of dictionaries.
+        
+        Returns:
+            List of metrics dictionaries from the metrics_history
+        """
+        return [m.to_dict() for m in self.metrics_history]
+    
     def generate_report(self, metrics_list: List[PerformanceMetrics]) -> str:
         """Generate a comparison report from multiple metrics."""
         lines = [
